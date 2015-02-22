@@ -1,0 +1,148 @@
+## Human Activity Recognition: A case study in use of machine learning techniques
+
+### Executive Summary
+The objective of the below analysis is to predict the type (activity class) in which a barbell exercise was carried out using accelerometer data. We have been given a training data set with labeled data and have been asked to predict the type for a new set of observations.
+
+Exploratory data analysis was initially carried out on the data to identify variables to be used in the prediction. Based on the analysis, it was identified that a number of variables could be eliminated. A number of data operations were carried on the data set to create a tidy set to be used for model development. 
+
+After some experimentation with classification alogrithms, random forest algorithm (R random forest package) was found to provide the best accuracy. Parameter tuning was carried out running several iterations of k-fold cross-validation. Over-fitting of the model was avoided by decreasing the number of trees in the forest. The out of bag error estimate was found to be 2.1% even by reducing the number of trees to 20. The out of sample cross-validation error over 10 iterations was found to be 0.82%.
+
+The final random forest model was used to predict the activity class of the test data and predicted all the 20 observations with 100% accuracy.
+
+
+### Data Exploration and Preparation
+The original training data set had 19622 observations with 160 variables. A cursory viewing of the data revealed that a number of variables are NAs. A detailed analysis showed that 100 variables had more than 90% of the records as NAs.
+
+Similarly, there were a number of non-numerical variables (name of the user, timestamps, new window, num window) that did not appear to be accelerometer measurements. Given that there were still another 50+ variables for predictions, it was decided to drop these variables.
+
+The remaining independent variables were evaluated for correlation to see if we could further reduce the number of variables. Using the findCorrelation functiaon from the caret package 20 other were identified to have correlation above 0.75. These variables were also eliminated for prediction.
+
+Finally, the dependent variable (classe) was converted to a factor variable. The final tidy set used for model development has 19622 observations and 32 variables
+
+
+### Model development
+
+#### Algorithm selection
+
+In order to be able to run many iterations quickly, two 10% random samples were selected from the training data set - one for training the model and one for testing the model. Accuracy (correct predictions as a ratio of testing samples) was used as metric for comparing models
+
+A binary tree algorithm (rpart package) was first used withdefault parameters. This model yielded an accuracy of 64.8% on the test data. 
+
+Next, a k-nearest neighbor algorithm (knn3 package) was used with default parameters. This model yielded an accuracy of 62.8% on the test data.
+
+Next, a support vector machine algorithm (svm package) was used with default parameters. This model yielded an accuracy of 84.5% on the test data.
+
+Finally, a random forest algorithm (randomForest package) was used with default parameters. This model yielded an accuracy of 94.7% on the test data.
+
+Based on the above results, random forest was chosen as the prediction algorithm.
+
+#### Cross-validation and parameter tuning.
+
+In order to avoid over-fitting the model and ensure that the model generalizes over new data, a k-fold (k=5) cross-validation was repeated over 10 iterations. The  folds were created using folds functions in the caret package.
+
+Random forest algorithm is prone to over-fitting. Another way of reducing over-fitting is to reduce the number of trees grown by the random forest. Decreasing the number of trees also decreases the run-time for training the model. The algorithm was run for different values of ntree parameter (500, 200, 100, 50, 20). It was found that even for ntree=20, the model gave a very good accuracy (see Appendifx - figure ) and an out of sample cross-validation error of less than 1% (sampled over 10 iterations).
+
+### Conclusion
+
+Based on the cross-validation results, we predict that the random forest model we build would generalize fairly well on a new data set and the estimate for the out of sample error would be less than 1%. The model was tried out on the 20 observations in the test set and predicted classe was correct in all the 20 cases confirming the accuracy/validity of the prediction model.
+
+
+-----
+
+### Appendix
+
+#### Figure 1 - Code listing for Data Exploration and Data Preparation
+
+```{r warning=FALSE, include=FALSE}
+library(caret)
+library(randomForest)
+```
+
+```{r warning=FALSE}
+#Load the Data
+df = read.csv("pml-training.csv", header=TRUE, 
+              na.strings=c("NA", ""), stringsAsFactors=FALSE)
+
+#Data preparation:
+  #1. Remove columns with more than 90% NAs
+  #2. Remove non-numeric columns - user name, timestamps, new window
+  #3. Cast y variable as a factor
+NA_cols = colSums(is.na(df)) > 0.9*nrow(df)
+df2 = df[, !NA_cols] 
+df2 = subset(df2, select=-c(X, 
+                            cvtd_timestamp, 
+                            user_name, 
+                            raw_timestamp_part_1,
+                            raw_timestamp_part_2, 
+                            new_window, 
+                            num_window))
+df2$classe = factor(df2$classe)
+
+#Data preparation continued:
+  #4. Remove variables that are highly correlated to decrease dimensionality
+
+y_col_idx = grep("classe", names(df2))
+#remove correlated variables
+corr = cor(df2[,-y_col_idx])
+highlyCorrCols = findCorrelation(corr, cutoff = 0.75) 
+
+df3 = df2[, -highlyCorrCols]
+y_col_idx = grep("classe", names(df3))
+df3_X = df3[,-y_col_idx]
+df3_y = df3$classe
+```
+
+#### Figure 2 - Code listing for cross-validation
+
+``` {r}
+#Model selection and development 
+  #1. Mulitple iterations of running k-fold (k=5) cross-validation
+  #2. Algorithm finally used randomForest
+
+iterations = 10
+cv_error = array(0, dim = c(iterations))
+
+for (i in 1:iterations)
+{
+  set.seed(i)
+  n_folds = 5 #k fold validation
+  folds = createFolds(df3_y, k=n_folds, list=FALSE)
+  
+  #declare variables to store accuracys and out of sample error
+  train_accuracy = array(0, dim = c(n_folds))
+  test_accuracy = array(0, dim = c(n_folds))
+  oos_error = array(0, dim = c(n_folds))
+  
+  for (j in 1:n_folds)
+  {
+    training_X = df3_X[folds!=j, ]
+    training_y = df3_y[folds!=j]
+    
+    testing_X = df3_X[folds==j, ]  
+    testing_y = df3_y[folds==j]  
+    fit = randomForest(x=training_X, y=training_y, ntree=20) 
+
+    #high degree of prediction accuracy has been observed even with a small value of ntree
+    #smaller ntree helps decrease run time and allow us to run more iterations
+    
+    train_accuracy[j] = sum(training_y == 
+                              predict(fit, training_X)) / nrow(training_X)
+    test_accuracy[j] = sum(testing_y == 
+                             predict(fit, testing_X))  / nrow(testing_X) 
+    
+    #oos error for each fold
+    oos_error[j] = sum(testing_y != 
+                             predict(fit, testing_X))  / nrow(testing_X)        
+  }  
+  cv_error[i] = mean(oos_error) #average oos error across the folds
+}
+```
+
+#### Figure 3 - Out of sample error and Final Model
+``` {r }
+print(mean(cv_error)) #final cross-validation error across all iterations
+```
+
+``` {r echo=FALSE}
+print(fit)
+```
